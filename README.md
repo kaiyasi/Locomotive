@@ -1,93 +1,291 @@
-# Locomotive
+## Locomotive
 
+This repository is the default starter template for the Serelix GitLab platform.
 
+### What This Platform Does
 
-## Getting started
+The platform builds one Docker image from your repository and deploys it through the host-managed pipeline.
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+You control:
+- `Dockerfile`
+- your application source code
+- `service.config.yml`
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+The platform controls:
+- `.gitlab-ci.yml`
+- deployment port allocation
+- production `docker compose` rendering
+- service network naming
+- service stop / cleanup flow
 
-## Add your files
+Production deployment does not read your repository's `docker-compose.yml`.
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+### Deployment Model
 
+For each repository:
+- CI builds a single image from the repository root `Dockerfile`
+- CI validates `service.config.yml`
+- CI tests every `expose: true` app service
+- deploy renders a host-side compose file into `/srv/services/<user>/<project>/docker-compose.yml`
+- every app service runs the same built image with a different `start` command
+- every `expose: true` app service gets its own allocated host port
+
+Naming rules:
+- project path: `/srv/services/<user>/<project>/`
+- container name: `<user>-<project>-<service>`
+- network name: `<user>-<project>-net`
+
+### Deploy Access And Port Pools
+
+Deploy access is controlled by platform policy, not by repository code.
+
+The platform syncs deploy policy from the GitLab admin-visible user `note` field into:
+- `/srv/platform/state/deploy-policies.json`
+
+Deploy policy resolution order:
+- group description policy by namespace (most specific group, then parent groups)
+- project creator user policy
+- if neither matches, run a ci fallback deploy test, then auto cleanup and release test ports
+
+Supported admin note keys:
+- `serelix-port-range: 12000-12999`
+- `serelix-namespaces: kaiyasi,serelix-studio,scaict`
+- `serelix-runner-tag: deploy`
+- `serelix-deploy: true`
+
+Minimal example:
+
+```text
+serelix-port-range: 12000-12999
+serelix-namespaces: kaiyasi,serelix-studio,scaict
 ```
-cd existing_repo
-git remote add origin https://gitlab.serelix.xyz/Kaiyasi/locomotive.git
-git branch -M main
-git push -uf origin main
+
+Notes:
+- `serelix-port-range` is the key that actually grants deploy access
+- `serelix-namespaces` maps multiple namespaces onto the same deploy user and port pool
+- group description policy has higher priority than creator user policy
+- if `serelix-runner-tag` is omitted, the platform uses `deploy`
+- current legacy users still have compatibility defaults, but new users should use note-based policy
+
+### Supported `service.config.yml`
+
+Use the `services:` format.
+
+App runtimes:
+- `node`
+- `python`
+- `go`
+- `static`
+
+Platform-managed sidecars:
+- `postgres`
+- `redis`
+- `meilisearch`
+
+Rules:
+- app services must set `name`, `port`, `runtime`, `start`
+- app services may set `expose: true` or `false`
+- sidecars must set `name`, `port`, `runtime`
+- sidecars must use `expose: false`
+- only one managed `postgres`, one managed `redis`, and one managed `meilisearch` are supported per project
+- service names are normalized to lowercase slug format
+
+Example:
+
+```yaml
+services:
+  - name: frontend
+    port: 3000
+    runtime: node
+    start: /app/bin/start-frontend.sh
+    expose: true
+
+  - name: backend
+    port: 8000
+    runtime: python
+    start: /app/bin/start-backend.sh
+    expose: false
+
+  - name: postgres
+    port: 5432
+    runtime: postgres
+    expose: false
+
+  - name: redis
+    port: 6379
+    runtime: redis
+    expose: false
+
+  - name: meilisearch
+    port: 7700
+    runtime: meilisearch
+    expose: false
 ```
 
-## Integrate with your tools
+### How To Structure Your Image
 
-* [Set up project integrations](https://gitlab.serelix.xyz/Kaiyasi/locomotive/-/settings/integrations)
+Because all app services share one image, your `Dockerfile` should produce one image containing everything needed by all app processes.
 
-## Collaborate with your team
+Typical pattern:
+- install frontend dependencies and build frontend assets
+- install backend dependencies
+- copy both frontend and backend into the final image
+- add one start script per app service
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+Example:
+- `/app/bin/start-frontend.sh`
+- `/app/bin/start-backend.sh`
+- `/app/bin/start-worker.sh`
 
-## Test and Deploy
+Each script should read `APP_PORT` when possible.
 
-Use the built-in continuous integration in GitLab.
+### How To Convert Your `docker-compose.yml`
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+Take each compose service and classify it.
 
-***
+If it is your application process:
+- convert it to one app service entry in `service.config.yml`
+- move its startup command into `start`
+- keep its internal listening port in `port`
+- set `expose: true` only if it should be reachable from outside
 
-# Editing this README
+If it is PostgreSQL, Redis, or Meilisearch:
+- convert it to a managed sidecar entry
+- remove its custom image / command / volume / port mapping from repo-side compose
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+If it is another infrastructure service:
+- this platform does not natively manage it right now
+- either bake the needed functionality into your app image, use an external managed service, or extend the platform first
 
-## Suggestions for a good README
+### Compose Mapping Guide
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+This is the intended mapping from a normal `docker-compose.yml` into platform config.
 
-## Name
-Choose a self-explaining name for your project.
+Compose:
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+```yaml
+services:
+  frontend:
+    build: .
+    command: /app/bin/start-frontend.sh
+    ports:
+      - "3000:3000"
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+  backend:
+    build: .
+    command: /app/bin/start-backend.sh
+    depends_on:
+      - postgres
+      - redis
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+  postgres:
+    image: postgres:15-alpine
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+  redis:
+    image: redis:7-alpine
+```
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+Platform version:
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+```yaml
+services:
+  - name: frontend
+    port: 3000
+    runtime: node
+    start: /app/bin/start-frontend.sh
+    expose: true
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+  - name: backend
+    port: 8000
+    runtime: python
+    start: /app/bin/start-backend.sh
+    expose: false
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+  - name: postgres
+    port: 5432
+    runtime: postgres
+    expose: false
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+  - name: redis
+    port: 6379
+    runtime: redis
+    expose: false
+```
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+What changes when moving from compose to this platform:
+- remove repository-side `ports` host bindings
+- remove repository-side production `depends_on`
+- remove repository-side production `container_name`
+- remove repository-side production `networks`
+- remove repository-side production `restart`
+- remove repository-side production `volumes` for managed sidecars
+- keep only app startup intent and internal ports
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+### What The Platform Automatically Wires
 
-## License
-For open source projects, say how it is licensed.
+App services automatically receive:
+- `APP_PORT`
+- `SERVICE_NAME`
+- `PROJECT_NAME`
+- `PROJECT_PATH`
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+If `postgres` exists:
+- `POSTGRES_HOST`
+- `POSTGRES_PORT`
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `DATABASE_URL`
+
+If `redis` exists:
+- `REDIS_HOST`
+- `REDIS_PORT`
+- `REDIS_URL`
+
+If `meilisearch` exists:
+- `MEILI_HOST`
+- `MEILI_PORT`
+- `MEILI_URL`
+- `MEILI_MASTER_KEY`
+
+### What Is Not Supported
+
+Do not expect these compose features to carry over directly:
+- arbitrary extra sidecar images beyond the managed set
+- custom production host port numbers
+- custom production network names
+- custom production volume bindings
+- privileged mode
+- host networking
+- mounting `/var/run/docker.sock`
+- production `docker-compose.yml` from the repository
+
+### Files In This Template
+
+Edit these:
+- `Dockerfile`
+- `service.config.yml`
+- `app/`
+
+Platform helper files:
+- `.gitlab-ci.yml`
+- `.platform/validate-service-config.sh`
+- `.platform/service-config.py`
+- `docker-compose.template.yml`
+
+### Practical Workflow
+
+1. Build one image that contains everything your app services need.
+2. Add one start script per app service.
+3. Declare app services in `service.config.yml`.
+4. Declare `postgres`, `redis`, or `meilisearch` only if you want platform-managed sidecars.
+5. Push to `main`.
+6. After deploy, check the allocated host port from the job log or `/srv/services/<user>/<project>/service.meta`.
+
+### Security Notes
+
+- Do not add production volume mounts in repository config.
+- Do not use host networking.
+- Do not request privileged mode.
+- Do not mount `/var/run/docker.sock` into your app.
+- Do not depend on repo-side production compose files.

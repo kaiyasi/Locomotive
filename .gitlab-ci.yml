@@ -1,0 +1,68 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_BUILDKIT: "1"
+  IMAGE_REF: "local/${CI_PROJECT_PATH_SLUG}:${CI_COMMIT_SHA}"
+
+default:
+  image: docker:27.5.1-cli
+  before_script:
+    - apk add --no-cache bash curl util-linux python3
+    - chmod +x .platform/validate-service-config.sh
+    - chmod +x .platform/service-config.py
+    - ./.platform/validate-service-config.sh service.config.yml | tee service.env
+    - . service.env
+
+build:
+  stage: build
+  tags:
+    - deploy
+  script:
+    - printf 'BUILD_JOB_ID=%s\n' "${CI_JOB_ID}" > build.env
+    - docker build --pull -t "${IMAGE_REF}" .
+    - docker save "${IMAGE_REF}" | gzip -1 > image.tar.gz
+  artifacts:
+    expire_in: 1 day
+    paths:
+      - build.env
+      - image.tar.gz
+      - service.config.yml
+      - service.env
+
+prepare_deploy:
+  stage: deploy
+  tags:
+    - deploy
+  needs:
+    - job: build
+      artifacts: true
+  script:
+    - apk add --no-cache python3
+    - . build.env
+    - PROJECT_NAMESPACE="${CI_PROJECT_NAMESPACE}"
+    - /srv/platform/bin/deploy-policy.py env --namespace "${PROJECT_NAMESPACE}" | tee deploy-policy.env
+    - . deploy-policy.env
+    - /srv/platform/bin/deploy-policy.py child-pipeline --namespace "${PROJECT_NAMESPACE}" --project-id "${CI_PROJECT_ID}" --build-job-id "${BUILD_JOB_ID}" > deploy-child.yml
+  artifacts:
+    expire_in: 1 day
+    paths:
+      - deploy-child.yml
+      - deploy-policy.env
+
+deploy:
+  stage: deploy
+  needs:
+    - job: prepare_deploy
+      artifacts: true
+  variables:
+    PARENT_PIPELINE_ID: $CI_PIPELINE_ID
+  trigger:
+    include:
+      - artifact: deploy-child.yml
+        job: prepare_deploy
+    strategy: depend
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
