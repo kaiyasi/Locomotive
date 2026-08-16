@@ -2,4 +2,4 @@ node_modules/
 .env
 data/
 *.log
-.platform/__pycache__/
+__pycache__/
