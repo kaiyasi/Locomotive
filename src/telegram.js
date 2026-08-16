@@ -1,3 +1,38 @@
+import http from "node:http";
+import https from "node:https";
+
+function fetchWithIpv4(url, options = {}) {
+  const transport = new URL(url).protocol === "http:" ? http : https;
+
+  return new Promise((resolve, reject) => {
+    const request = transport.request(
+      url,
+      {
+        method: options.method || "GET",
+        headers: options.headers,
+        signal: options.signal,
+        family: 4,
+      },
+      (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () => {
+          const body = Buffer.concat(chunks).toString("utf8");
+          const status = response.statusCode ?? 0;
+          resolve({
+            ok: status >= 200 && status < 300,
+            status,
+            text: async () => body,
+          });
+        });
+      },
+    );
+
+    request.on("error", reject);
+    request.end(options.body);
+  });
+}
+
 export class TelegramApiError extends Error {
   constructor(message, { code, description, method } = {}) {
     super(message);
@@ -9,7 +44,7 @@ export class TelegramApiError extends Error {
 }
 
 export class TelegramApi {
-  constructor(token, { fetchImpl = globalThis.fetch, baseUrl = "https://api.telegram.org" } = {}) {
+  constructor(token, { fetchImpl = fetchWithIpv4, baseUrl = "https://api.telegram.org" } = {}) {
     if (typeof fetchImpl !== "function") {
       throw new Error("A fetch implementation is required.");
     }

@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ParkingBot } from "../src/bot.js";
+import { BUTTONS } from "../src/messages.js";
 import { ParkingStore } from "../src/store.js";
 
 class FakeTelegramApi {
@@ -54,7 +55,7 @@ test("ParkingBot records a private-chat location and returns it later", async (t
     message: {
       chat: { id: 42, type: "private" },
       from: { id: 42 },
-      text: "🔎 查詢我的位置",
+      text: BUTTONS.where,
     },
   });
 

@@ -20,6 +20,10 @@
 # expose:
 #   true to publish a host port automatically, false for internal-only services.
 #   Managed sidecars must stay false.
+#
+# persistent_path:
+#   Optional absolute directory inside an app container backed by a platform-managed
+#   named volume. Use this for application data that must survive redeploys.
 
 services:
   - name: bot
@@ -27,3 +31,4 @@ services:
     runtime: node
     start: node /app/src/index.js
     expose: false
+    persistent_path: /app/data

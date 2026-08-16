@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { formatLocationDetails, googleMapsUrl } from "../src/messages.js";
+import {
+  BUTTONS,
+  formatLocationDetails,
+  googleMapsUrl,
+  mainKeyboard,
+  welcomeText,
+} from "../src/messages.js";
 
 const record = {
   latitude: 25.033964,
@@ -19,7 +25,19 @@ test("googleMapsUrl encodes a coordinate query", () => {
 
 test("location details escape user notes", () => {
   const text = formatLocationDetails(record, { timeZone: "Asia/Taipei" });
+  assert.match(text, /位置記好了/);
   assert.match(text, /B2 &lt;17&gt;/);
   assert.doesNotMatch(text, /B2 <17>/);
-  assert.match(text, /定位誤差：約 8 公尺/);
+  assert.match(text, /誤差：約 8 公尺/);
+});
+
+test("main keyboard uses plain-language parking actions", () => {
+  assert.deepEqual(mainKeyboard().keyboard.flat().map((button) => button.text), [
+    BUTTONS.save,
+    BUTTONS.where,
+    BUTTONS.note,
+    BUTTONS.delete,
+    BUTTONS.help,
+  ]);
+  assert.match(welcomeText(), /車位記一下/);
 });

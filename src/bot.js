@@ -162,7 +162,7 @@ export class ParkingBot {
       context,
       formatLocationDetails(record, {
         timeZone: this.timeZone,
-        action: previous ? "已更新" : "已記錄",
+        action: previous ? "updated" : "saved",
       }),
     );
   }
@@ -183,7 +183,10 @@ export class ParkingBot {
       record.longitude,
       { reply_markup: mapKeyboard(record) },
     );
-    return this.sendMenu(context, formatLocationDetails(record, { timeZone: this.timeZone }));
+    return this.sendMenu(
+      context,
+      formatLocationDetails(record, { timeZone: this.timeZone, action: "found" }),
+    );
   }
 
   async handleNote(context, args = "") {
@@ -238,7 +241,7 @@ export class ParkingBot {
     if (callbackQuery.data === DELETE_CONFIRM_CALLBACK) {
       const removed = await this.store.remove(context.userId);
       await this.api.answerCallbackQuery(callbackQuery.id, {
-        text: removed ? "已清除" : "沒有可清除的紀錄",
+        text: removed ? "刪掉了" : "這筆已經不存在了",
       });
       await this.clearInlineKeyboard(context);
       return this.sendMenu(context, removed ? deletedText() : noLocationText());

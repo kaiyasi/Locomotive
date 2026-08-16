@@ -2,20 +2,20 @@ export const DELETE_CONFIRM_CALLBACK = "parking:delete:confirm";
 export const DELETE_CANCEL_CALLBACK = "parking:delete:cancel";
 
 export const BUTTONS = {
-  save: "📍 記錄停車位置",
-  where: "🔎 查詢我的位置",
-  note: "📝 編輯備註",
-  delete: "🗑 清除停車位置",
-  help: "ℹ️ 使用說明",
+  save: "記一下位置",
+  where: "我停哪裡？",
+  note: "補個備註",
+  delete: "刪掉這筆",
+  help: "看一下用法",
 };
 
 export const BOT_COMMANDS = [
-  { command: "start", description: "開啟停車定位選單" },
-  { command: "save", description: "記錄目前停車位置" },
-  { command: "where", description: "查詢已記錄的位置" },
-  { command: "note", description: "新增或修改停車備註" },
-  { command: "delete", description: "清除已記錄的位置" },
-  { command: "help", description: "查看使用說明" },
+  { command: "start", description: "開始使用" },
+  { command: "save", description: "記下目前位置" },
+  { command: "where", description: "找回停車位置" },
+  { command: "note", description: "新增停車備註" },
+  { command: "delete", description: "刪除停車紀錄" },
+  { command: "help", description: "查看使用方式" },
 ];
 
 export function mainKeyboard() {
@@ -27,21 +27,21 @@ export function mainKeyboard() {
     ],
     resize_keyboard: true,
     is_persistent: true,
-    input_field_placeholder: "選擇功能或分享位置",
+    input_field_placeholder: "傳位置，或選個功能",
   };
 }
 
 export function mapKeyboard(record) {
   return {
-    inline_keyboard: [[{ text: "在 Google 地圖開啟", url: googleMapsUrl(record) }]],
+    inline_keyboard: [[{ text: "打開地圖", url: googleMapsUrl(record) }]],
   };
 }
 
 export function deleteKeyboard() {
   return {
     inline_keyboard: [[
-      { text: "確認清除", callback_data: DELETE_CONFIRM_CALLBACK },
-      { text: "取消", callback_data: DELETE_CANCEL_CALLBACK },
+      { text: "刪掉這筆", callback_data: DELETE_CONFIRM_CALLBACK },
+      { text: "先留著", callback_data: DELETE_CANCEL_CALLBACK },
     ]],
   };
 }
@@ -63,10 +63,14 @@ export function escapeHtml(value) {
 function formatTimestamp(value, timeZone) {
   try {
     return new Intl.DateTimeFormat("zh-TW", {
-      dateStyle: "medium",
-      timeStyle: "short",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
       timeZone,
-    }).format(new Date(value));
+    }).format(new Date(value)).replace(/\u2009/g, " ");
   } catch {
     return value;
   }
@@ -76,78 +80,90 @@ function formatCoordinate(value) {
   return Number(value).toFixed(6);
 }
 
-export function formatLocationDetails(record, { timeZone = "Asia/Taipei", action = "已記錄" } = {}) {
+export function formatLocationDetails(record, { timeZone = "Asia/Taipei", action = "saved" } = {}) {
+  const title = {
+    saved: "位置記好了",
+    updated: "位置更新了",
+    found: "這是你上次停車的位置",
+  }[action] || "位置記好了";
   const lines = [
-    `<b>${action}機車停車位置</b>`,
+    `<b>${title}</b>`,
+    "",
     `時間：${escapeHtml(formatTimestamp(record.savedAt, timeZone))}`,
     `座標：${formatCoordinate(record.latitude)}, ${formatCoordinate(record.longitude)}`,
   ];
 
   if (record.accuracy !== null && record.accuracy !== undefined) {
-    lines.push(`定位誤差：約 ${Math.round(Number(record.accuracy))} 公尺`);
+    lines.push(`誤差：約 ${Math.round(Number(record.accuracy))} 公尺`);
   }
   if (record.note) {
     lines.push(`備註：${escapeHtml(record.note)}`);
   }
 
-  lines.push("請點下方按鈕開啟地圖。", "", "下次停車時直接分享新的位置，就會更新紀錄。");
+  lines.push(
+    "",
+    action === "found"
+      ? `要再找一次，按「${BUTTONS.where}」就好。`
+      : "下次停好車，直接再傳一次位置就會更新。",
+  );
   return lines.join("\n");
 }
 
 export function welcomeText() {
   return [
-    "<b>機車停車定位</b>",
-    "把停車位置分享給我，下次回來就能快速找回。",
+    "<b>車位記一下</b>",
+    `停好車，把目前位置傳給我；回來時按「${BUTTONS.where}」，地圖就會回來。`,
     "",
-    "使用方式：按「📍 記錄停車位置」，再從 Telegram 分享目前位置。",
+    `先按「${BUTTONS.save}」開始。`,
   ].join("\n");
 }
 
 export function helpText() {
   return [
-    "<b>使用說明</b>",
+    "<b>怎麼用</b>",
     "",
-    "1. 停好車後，按「📍 記錄停車位置」並分享位置。",
-    "2. 回來時按「🔎 查詢我的位置」取得地圖與座標。",
-    "3. 可按「📝 編輯備註」記下樓層、柱號或附近地標。",
-    "4. 要重新停車時，直接分享新位置即可覆蓋舊紀錄。",
+    `停好車　按「${BUTTONS.save}」，傳目前位置。`,
+    `找車　　按「${BUTTONS.where}」。`,
+    `備註　　按「${BUTTONS.note}」，記樓層、柱號或地標。`,
+    "重停　　再傳一次位置，就會換成新的。",
+    `刪除　　按「${BUTTONS.delete}」。`,
     "",
-    "所有紀錄只依你的 Telegram 帳號保存，不會顯示給其他使用者。",
+    "位置只存在自己的紀錄裡。",
   ].join("\n");
 }
 
 export function noLocationText() {
-  return "目前還沒有停車位置。停好車後按「📍 記錄停車位置」並分享位置即可。";
+  return `還沒有位置可找。停好車後按「${BUTTONS.save}」，把目前位置傳過來就好。`;
 }
 
 export function locationRequestText() {
-  return "請按下方「📍 記錄停車位置」分享目前位置。";
+  return "把你現在的位置傳過來就好。";
 }
 
 export function deletedText() {
-  return "已清除停車位置紀錄。";
+  return "刪掉了。下次停好車，再傳一次位置就好。";
 }
 
 export function deleteConfirmText() {
-  return "確定要清除目前的停車位置嗎？";
+  return "要把這筆停車位置刪掉嗎？";
 }
 
 export function deleteCancelledText() {
-  return "已取消清除。";
+  return "好，先留著。";
 }
 
 export function notePromptText() {
-  return "請直接輸入備註，例如「B2-17 柱旁」。輸入「清除」可以移除備註。";
+  return "想補什麼？例如：B2、17 號柱旁。\n輸入「清除」可以拿掉備註。";
 }
 
 export function noteSavedText(note) {
-  return note ? `已更新備註：${escapeHtml(note)}` : "已清除備註。";
+  return note ? `備註記好了：${escapeHtml(note)}` : "備註清掉了。";
 }
 
 export function unauthorizedText() {
-  return "這個 Bot 目前不開放你的帳號使用。";
+  return "這個 Bot 目前只開放給指定帳號使用。";
 }
 
 export function unknownText() {
-  return "請使用下方選單，或輸入 /help 查看可用功能。";
+  return "我沒看懂。用下面的選單就好，或輸入 /help 看看。";
 }

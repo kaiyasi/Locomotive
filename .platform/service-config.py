@@ -167,6 +167,21 @@ def validate_name(value: str, label: str) -> str:
     return name
 
 
+def validate_persistent_path(value: object, label: str) -> str:
+    path = str(value or "").strip()
+    if not path:
+        return ""
+    if not path.startswith("/") or path == "/":
+        raise ValueError(f"{label}: persistent_path must be an absolute directory path")
+    if any(ord(ch) < 32 or ch.isspace() for ch in path):
+        raise ValueError(f"{label}: persistent_path contains whitespace or control characters")
+    if "//" in path or "/../" in f"{path}/" or path.endswith("/.."):
+        raise ValueError(f"{label}: persistent_path contains an invalid path segment")
+    if any(path == reserved or path.startswith(f"{reserved}/") for reserved in ("/dev", "/etc", "/proc", "/run", "/sys", "/tmp")):
+        raise ValueError(f"{label}: persistent_path cannot target a system or temporary directory")
+    return path.rstrip("/")
+
+
 def validate_services_config(raw_services: list[dict]) -> list[dict]:
     validated: list[dict] = []
     seen_names: set[str] = set()
@@ -195,6 +210,7 @@ def validate_services_config(raw_services: list[dict]) -> list[dict]:
             if any(ord(ch) < 32 for ch in start):
                 raise ValueError(f"service {name}: start contains control characters")
             expose = parse_expose(service.get("expose", False), False)
+            persistent_path = validate_persistent_path(service.get("persistent_path", ""), f"service {name}")
         else:
             if start:
                 raise ValueError(f"service {name}: managed runtime does not allow start")
@@ -204,6 +220,7 @@ def validate_services_config(raw_services: list[dict]) -> list[dict]:
             managed_counts[runtime] += 1
             if managed_counts[runtime] > 1:
                 raise ValueError(f"only one managed {runtime} service is supported")
+            persistent_path = ""
 
         validated.append(
             {
@@ -212,6 +229,7 @@ def validate_services_config(raw_services: list[dict]) -> list[dict]:
                 "runtime": runtime,
                 "start": start,
                 "expose": expose,
+                "persistent_path": persistent_path,
             }
         )
 
@@ -416,6 +434,7 @@ def render_app_service(
     runtime: str,
     start: str,
     expose: bool,
+    persistent_path: str,
     allocations: dict[str, str],
     deploy_user: str,
     project_slug: str,
@@ -478,6 +497,10 @@ def render_app_service(
         if not host_port:
             raise ValueError(f"missing host port allocation for exposed service: {name}")
         lines.extend(["    ports:", f"      - {yaml_quote(f'{host_port}:{port}')}"])
+
+    if persistent_path:
+        volume_name = f"{deploy_user}-{project_slug}-{name}-data"
+        lines.extend(["    volumes:", f"      - {yaml_quote(f'{volume_name}:{persistent_path}')}"])
 
     internal_expose_ports = []
     for dependency in (postgres_service, redis_service, meili_service):
@@ -595,6 +618,7 @@ def emit_services_compose(
             service["runtime"],
             service["start"],
             service["expose"],
+            service["persistent_path"],
             allocations,
             deploy_user,
             project_slug,
@@ -611,11 +635,15 @@ def emit_services_compose(
     print("  app:")
     print(f"    name: {yaml_quote(f'{deploy_user}-{project_slug}-net')}")
 
-    managed_services = [service for service in services if service["runtime"] in {"postgres", "meilisearch"}]
-    if managed_services:
+    volume_services = [
+        service
+        for service in services
+        if service["runtime"] in {"postgres", "meilisearch"} or service["persistent_path"]
+    ]
+    if volume_services:
         print("")
         print("volumes:")
-        for service in managed_services:
+        for service in volume_services:
             volume_name = f"{deploy_user}-{project_slug}-{service['name']}-data"
             print(f"  {volume_name}:")
             print(f"    name: {yaml_quote(volume_name)}")
@@ -650,6 +678,7 @@ def emit_legacy_compose(
         legacy["runtime"],
         legacy["start"],
         True,
+        "",
         {public_name: host_port, "app": host_port},
         deploy_user,
         project_slug,
