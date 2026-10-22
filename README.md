@@ -99,4 +99,7 @@ npm test
 
 ## License
 
-This project is intended to be released as open source. Add a license file before publishing the repository.
+This project is licensed under the [KYL Open License](LICENSE).
+
+
+See [LICENSING.md](LICENSING.md) for license scope, third-party exceptions, and earlier-version notices.
